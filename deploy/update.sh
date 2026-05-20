@@ -31,7 +31,11 @@ echo "→ fleetwatch deploy starting (repo=$REPO_ROOT)"
 cd "$REPO_ROOT"
 
 # ─── Pick the right vhost template based on cert presence ──────────────────
-if [[ -f "$CERT_PATH" ]]; then
+# Prefer checking the installed vhost (deploy user can always read it) over
+# the cert file directly (deploy user may lack read access to /etc/letsencrypt).
+# Fallback: try the cert path directly (works when running as root).
+_installed="$NGINX_INSTALLED"
+if grep -q "ssl_certificate" "$_installed" 2>/dev/null || [[ -f "$CERT_PATH" ]]; then
     NGINX_TEMPLATE="$REPO_ROOT/deploy/nginx/fleetwatch-landing-host.conf"
     echo "→ cert found — using full HTTPS template"
     SMOKE_PROTO="https"
