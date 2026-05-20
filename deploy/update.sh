@@ -1,40 +1,53 @@
 #!/usr/bin/env bash
 # fleetwatch landing — server-side deploy script.
 #
-# Runs as the `deploy` user on the VPS. Pulls latest from git, syncs the
-# nginx vhost from the repo template (substituting __FLEETWATCH_REPO_ROOT__),
-# runs `nginx -t`, and reloads. No node service, no Docker — the landing is
-# fully static.
+# Runs as the `deploy` user on the VPS. Pulls latest from git, picks the
+# right nginx vhost template based on whether a Let's Encrypt cert exists,
+# substitutes the repo-root placeholder, runs `nginx -t`, and reloads.
 #
-# Usage:    /home/fleetwatch/deploy/update.sh
-# Idempotent: safe to run repeatedly.
+# Two template paths:
+#   • cert present → deploy/nginx/fleetwatch-landing-host.conf (full HTTPS)
+#   • cert missing → deploy/nginx/fleetwatch-landing-host-pre-tls.conf
+#                    (HTTP-only; serves the page so finalize-tls.sh can
+#                     issue the cert via the webroot ACME challenge)
+#
+# Idempotent: safe to run repeatedly. Used by GitHub Actions + manual.
 
 set -euo pipefail
 
 REPO_ROOT="${FLEETWATCH_REPO_ROOT:-/home/fleetwatch}"
-NGINX_TEMPLATE="$REPO_ROOT/deploy/nginx/fleetwatch-landing-host.conf"
 NGINX_INSTALLED="/etc/nginx/sites-available/fleetwatch-landing"
 NGINX_ENABLED="/etc/nginx/sites-enabled/fleetwatch-landing"
+CERT_PATH="/etc/letsencrypt/live/fleetwatch.ohmaseclaro.dev/fullchain.pem"
 
 echo "→ fleetwatch deploy starting (repo=$REPO_ROOT)"
 
 # ─── Pull latest ────────────────────────────────────────────────────────────
 cd "$REPO_ROOT"
 git fetch --tags origin
-# `git pull --ff-only` would fail on a diverged local clone — but the deploy
-# tree should never have local commits. Hard-reset to origin/main keeps it
-# fast-forward AND fixes any accidental local drift.
 git reset --hard origin/main
 
-# ─── Render nginx vhost (substitute repo-root placeholder) ──────────────────
+# ─── Pick the right vhost template based on cert presence ──────────────────
+if [[ -f "$CERT_PATH" ]]; then
+    NGINX_TEMPLATE="$REPO_ROOT/deploy/nginx/fleetwatch-landing-host.conf"
+    echo "→ cert found — using full HTTPS template"
+    SMOKE_PROTO="https"
+    SMOKE_PORT=443
+else
+    NGINX_TEMPLATE="$REPO_ROOT/deploy/nginx/fleetwatch-landing-host-pre-tls.conf"
+    echo "→ no cert at $CERT_PATH — using pre-TLS (HTTP-only) template"
+    echo "  After DNS is live, run: sudo /home/fleetwatch/deploy/finalize-tls.sh"
+    SMOKE_PROTO="http"
+    SMOKE_PORT=80
+fi
+
+# ─── Render vhost (substitute repo-root placeholder) ────────────────────────
 TMP_VHOST="$(mktemp)"
 trap 'rm -f "$TMP_VHOST"' EXIT
 sed "s|__FLEETWATCH_REPO_ROOT__|${REPO_ROOT}|g" "$NGINX_TEMPLATE" > "$TMP_VHOST"
 
 # ─── Install + reload ───────────────────────────────────────────────────────
-# `sudo` here is gated to specific commands by /etc/sudoers.d/fleetwatch (set
-# up once during provisioning) — so `deploy` can install nginx vhosts and
-# reload nginx without a password, and only that.
+# `sudo` here is gated to specific commands by /etc/sudoers.d/fleetwatch.
 sudo install -o root -g root -m 0644 "$TMP_VHOST" "$NGINX_INSTALLED"
 
 if [[ ! -L "$NGINX_ENABLED" ]]; then
@@ -48,16 +61,23 @@ echo "→ reload nginx"
 sudo systemctl reload nginx
 
 # ─── Smoke check ────────────────────────────────────────────────────────────
-echo "→ smoke check (loopback HTTPS, host header override)"
-HTTP_STATUS=$(curl -sS -o /dev/null -w "%{http_code}" \
-    --resolve fleetwatch.ohmaseclaro.dev:443:127.0.0.1 \
-    --max-time 5 \
-    https://fleetwatch.ohmaseclaro.dev/ || echo "000")
-echo "   GET https://fleetwatch.ohmaseclaro.dev/ → $HTTP_STATUS"
+echo "→ smoke check (loopback ${SMOKE_PROTO^^}, host header override)"
+if [[ "$SMOKE_PROTO" == "https" ]]; then
+    HTTP_STATUS=$(curl -sS -o /dev/null -w "%{http_code}" \
+        --resolve fleetwatch.ohmaseclaro.dev:${SMOKE_PORT}:127.0.0.1 \
+        --max-time 5 \
+        https://fleetwatch.ohmaseclaro.dev/ || echo "000")
+else
+    HTTP_STATUS=$(curl -sS -o /dev/null -w "%{http_code}" \
+        -H "Host: fleetwatch.ohmaseclaro.dev" \
+        --max-time 5 \
+        http://127.0.0.1:${SMOKE_PORT}/ || echo "000")
+fi
+echo "   GET ${SMOKE_PROTO}://fleetwatch.ohmaseclaro.dev/ → $HTTP_STATUS"
 
 if [[ "$HTTP_STATUS" != "200" ]]; then
     echo "✗ smoke check failed (expected 200, got $HTTP_STATUS)" >&2
     exit 1
 fi
 
-echo "✓ fleetwatch landing deployed"
+echo "✓ fleetwatch landing deployed (${SMOKE_PROTO})"
