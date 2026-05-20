@@ -1,58 +1,247 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { Settings } from "lucide-react";
-import { useStore, sortSessions } from "../lib/store";
+import { ChevronDown, Settings } from "lucide-react";
+import { useStore, sortSessions, sessionSortKey } from "../lib/store";
 import { SessionRow } from "../components/SessionRow";
 import { ConnectionPill } from "../components/ConnectionPill";
 import { ProviderIcon } from "../components/ProviderIcon";
 import type { Session, SessionSource } from "../../shared/types";
 
-/** UI source-filter tabs. "chat" is shown disabled — Claude.ai chats are cloud-only. */
-type SourceFilter = "all" | "claude-code" | "cowork" | "cursor" | "chat";
+// ─── Provider multi-select dropdown ─────────────────────────────────────────
 
-interface Tab {
-  id: SourceFilter;
-  label: string;
-  /** Source whose icon should appear in the tab (omit for All / Chat). */
-  iconSource?: SessionSource;
-  /** When true, the tab is rendered but not clickable. */
-  disabled?: boolean;
-  /** Predicate to determine if a session belongs to this tab. */
-  matches: (s: Session) => boolean;
+const PROVIDERS: { source: SessionSource; label: string }[] = [
+  { source: "claude-code", label: "Claude Code" },
+  { source: "cowork",      label: "Cowork" },
+  { source: "cursor",      label: "Cursor" },
+];
+
+function ProvidersDropdown({
+  selected,
+  onChange,
+}: {
+  selected: Set<SessionSource>;
+  onChange: (next: Set<SessionSource>) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  const allSelected = selected.size === 0 || selected.size === PROVIDERS.length;
+  const label = allSelected
+    ? "All providers"
+    : PROVIDERS.filter((p) => selected.has(p.source))
+        .map((p) => (p.source === "claude-code" ? "Claude" : p.label))
+        .join(", ");
+
+  function toggle(source: SessionSource) {
+    const next = new Set(selected);
+    if (next.has(source)) {
+      next.delete(source);
+    } else {
+      next.add(source);
+    }
+    // If all checked or none left, reset to "all"
+    onChange(next.size === 0 || next.size === PROVIDERS.length ? new Set() : next);
+  }
+
+  function toggleAll() {
+    onChange(new Set());
+  }
+
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <button
+        onClick={() => setOpen((p) => !p)}
+        className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-md font-medium transition-colors"
+        style={{
+          background: selected.size > 0 ? "var(--accent)" : "var(--bg-subtle)",
+          color: selected.size > 0 ? "white" : "var(--text-muted)",
+          border: `1px solid ${selected.size > 0 ? "var(--accent)" : "var(--border)"}`,
+          maxWidth: "160px",
+        }}
+      >
+        <span className="truncate">{label}</span>
+        <ChevronDown size={10} className="flex-shrink-0" style={{ opacity: 0.7 }} />
+      </button>
+
+      {open && (
+        <div
+          className="absolute left-0 top-full mt-1 rounded-lg z-50 overflow-hidden"
+          style={{
+            background: "var(--bg-elevated)",
+            border: "1px solid var(--border)",
+            boxShadow: "0 8px 24px rgba(0,0,0,0.35)",
+            minWidth: "160px",
+          }}
+        >
+          {/* All option */}
+          <label
+            className="flex items-center gap-2.5 px-3 py-2 cursor-pointer hover:opacity-80"
+            style={{ borderBottom: "1px solid var(--border)" }}
+          >
+            <input
+              type="checkbox"
+              checked={allSelected}
+              onChange={toggleAll}
+              className="accent-accent"
+            />
+            <span className="text-xs" style={{ color: "var(--text)" }}>All providers</span>
+          </label>
+          {PROVIDERS.map((p) => (
+            <label
+              key={p.source}
+              className="flex items-center gap-2.5 px-3 py-2 cursor-pointer hover:opacity-80"
+            >
+              <input
+                type="checkbox"
+                checked={allSelected || selected.has(p.source)}
+                onChange={() => toggle(p.source)}
+                className="accent-accent"
+              />
+              <ProviderIcon source={p.source} size={11} />
+              <span className="text-xs" style={{ color: "var(--text)" }}>{p.label}</span>
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
-const TABS: Tab[] = [
-  { id: "all",         label: "All",    matches: () => true },
-  { id: "claude-code", label: "Claude", iconSource: "claude-code", matches: (s) => s.source === "claude-code" },
-  { id: "cowork",      label: "Cowork", iconSource: "cowork",      matches: (s) => s.source === "cowork" },
-  { id: "cursor",      label: "Cursor", iconSource: "cursor",      matches: (s) => s.source === "cursor" },
-  // Disabled placeholder — Chat lives on Anthropic's servers, no local files to tail.
-  { id: "chat",        label: "Chat",   disabled: true, matches: () => false },
-];
+// ─── Project filter dropdown ─────────────────────────────────────────────────
+
+function ProjectDropdown({
+  projects,
+  selected,
+  onChange,
+}: {
+  projects: string[];
+  selected: string | null;
+  onChange: (p: string | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  if (projects.length === 0) return null;
+
+  const label = selected
+    ? selected.split("/").pop() ?? selected
+    : "All projects";
+
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <button
+        onClick={() => setOpen((p) => !p)}
+        className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-md font-medium transition-colors"
+        style={{
+          background: selected ? "var(--bg-elevated)" : "var(--bg-subtle)",
+          color: selected ? "var(--text)" : "var(--text-muted)",
+          border: `1px solid ${selected ? "var(--accent)" : "var(--border)"}`,
+          maxWidth: "160px",
+        }}
+      >
+        <span className="truncate">{label}</span>
+        <ChevronDown size={10} className="flex-shrink-0" style={{ opacity: 0.7 }} />
+      </button>
+
+      {open && (
+        <div
+          className="absolute left-0 top-full mt-1 rounded-lg z-50 overflow-hidden"
+          style={{
+            background: "var(--bg-elevated)",
+            border: "1px solid var(--border)",
+            boxShadow: "0 8px 24px rgba(0,0,0,0.35)",
+            minWidth: "180px",
+            maxHeight: "260px",
+            overflowY: "auto",
+          }}
+        >
+          <button
+            onClick={() => { onChange(null); setOpen(false); }}
+            className="w-full text-left flex items-center gap-2 px-3 py-2 text-xs hover:opacity-80"
+            style={{
+              color: selected === null ? "var(--accent)" : "var(--text-muted)",
+              borderBottom: "1px solid var(--border)",
+              fontWeight: selected === null ? 600 : 400,
+            }}
+          >
+            All projects
+          </button>
+          {projects.map((p) => {
+            const shortName = p.split("/").pop() ?? p;
+            const active = selected === p;
+            return (
+              <button
+                key={p}
+                onClick={() => { onChange(active ? null : p); setOpen(false); }}
+                className="w-full text-left flex items-center gap-2 px-3 py-2 text-xs hover:opacity-80 truncate"
+                style={{
+                  color: active ? "var(--accent)" : "var(--text)",
+                  fontWeight: active ? 600 : 400,
+                  display: "block",
+                }}
+                title={p}
+              >
+                {shortName}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Grouped rendering ───────────────────────────────────────────────────────
+
+interface ProjectGroup {
+  label: string;
+  sessions: Session[];
+  latestKey: number;
+}
+
+function buildGroups(sessions: Session[]): ProjectGroup[] {
+  const map = new Map<string, Session[]>();
+  for (const s of sessions) {
+    const key = s.projectLabel;
+    if (!map.has(key)) map.set(key, []);
+    map.get(key)!.push(s);
+  }
+  return [...map.entries()]
+    .map(([label, list]) => ({
+      label,
+      sessions: list,
+      latestKey: Math.max(...list.map(sessionSortKey)),
+    }))
+    .sort((a, b) => b.latestKey - a.latestKey);
+}
+
+// ─── Main screen ─────────────────────────────────────────────────────────────
 
 export function SessionList() {
   const sessionsMap = useStore((s) => s.sessions);
   const connection = useStore((s) => s.connection);
   const [now, setNow] = useState(Date.now());
-  const [filter, setFilter] = useState<SourceFilter>("all");
+  const [selectedProviders, setSelectedProviders] = useState<Set<SessionSource>>(new Set());
+  const [selectedProject, setSelectedProject] = useState<string | null>(null);
   const [query, setQuery] = useState("");
-
-  // Tab strip scroll-fade affordance — true on each side means "there's more
-  // content that direction, show the fade gradient".
-  const tabRowRef = useRef<HTMLDivElement | null>(null);
-  const [tabScroll, setTabScroll] = useState({ left: false, right: false });
-  const updateTabScroll = useCallback(() => {
-    const el = tabRowRef.current;
-    if (!el) return;
-    const left = el.scrollLeft > 4;
-    const right = el.scrollLeft + el.clientWidth < el.scrollWidth - 4;
-    setTabScroll((prev) => (prev.left === left && prev.right === right ? prev : { left, right }));
-  }, []);
-  useLayoutEffect(() => {
-    updateTabScroll();
-    window.addEventListener("resize", updateTabScroll);
-    return () => window.removeEventListener("resize", updateTabScroll);
-  }, [updateTabScroll]);
 
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 5_000);
@@ -60,22 +249,28 @@ export function SessionList() {
   }, []);
 
   const sessions = useMemo(() => sortSessions(sessionsMap), [sessionsMap, now]);
-  // Per-tab counts for the pill badges — computed once.
-  const counts = useMemo(() => {
-    const c = { all: 0, "claude-code": 0, cowork: 0, cursor: 0 } as Record<SourceFilter, number>;
+
+  // Unique sorted project labels from all non-compacted sessions.
+  const allProjects = useMemo(() => {
+    const seen = new Set<string>();
     for (const s of sessions) {
-      if (s.status === "compacted") continue;
-      c.all += 1;
-      const key = s.source as keyof typeof c;
-      if (key in c) c[key] += 1;
+      if (s.status !== "compacted") seen.add(s.projectLabel);
     }
-    return c;
+    return [...seen].sort();
   }, [sessions]);
 
+  const totalCount = useMemo(
+    () => sessions.filter((s) => s.status !== "compacted").length,
+    [sessions],
+  );
+
   const filtered = useMemo(() => {
-    const tab = TABS.find((t) => t.id === filter) ?? TABS[0];
-    // Always hide compacted (archived) sessions; otherwise apply tab + search.
-    let list = sessions.filter((s) => s.status !== "compacted" && tab.matches(s));
+    let list = sessions.filter((s) => {
+      if (s.status === "compacted") return false;
+      if (selectedProviders.size > 0 && !selectedProviders.has(s.source)) return false;
+      if (selectedProject && s.projectLabel !== selectedProject) return false;
+      return true;
+    });
     if (query.trim()) {
       const q = query.toLowerCase();
       list = list.filter(
@@ -87,7 +282,17 @@ export function SessionList() {
       );
     }
     return list;
-  }, [sessions, filter, query]);
+  }, [sessions, selectedProviders, selectedProject, query]);
+
+  // Group sessions by project. Flat list when a single project is selected.
+  const groups = useMemo<ProjectGroup[]>(() => {
+    if (selectedProject) {
+      return [{ label: selectedProject, sessions: filtered, latestKey: 0 }];
+    }
+    return buildGroups(filtered);
+  }, [filtered, selectedProject]);
+
+  const hasFilters = selectedProviders.size > 0 || selectedProject !== null || query.trim() !== "";
 
   return (
     <div className="flex flex-col flex-1 min-h-full">
@@ -95,7 +300,7 @@ export function SessionList() {
         className="sticky top-0 z-20 safe-top safe-x px-4 pt-3 pb-2.5"
         style={{ background: "var(--bg)", borderBottom: "1px solid var(--border)" }}
       >
-        {/* Row 1: title + connection + settings */}
+        {/* Row 1: title + count + connection + settings */}
         <div className="flex items-center justify-between mb-2.5">
           <div className="flex items-baseline gap-2 min-w-0">
             <h1 className="text-base font-semibold tracking-tight" style={{ color: "var(--text)" }}>
@@ -106,8 +311,8 @@ export function SessionList() {
               style={{ color: "var(--text-faint)", fontFamily: "var(--font-mono)" }}
             >
               {filtered.length}
-              {filtered.length !== counts.all && (
-                <span style={{ opacity: 0.6 }}> · {counts.all}</span>
+              {filtered.length !== totalCount && (
+                <span style={{ opacity: 0.6 }}> · {totalCount}</span>
               )}
             </span>
           </div>
@@ -124,7 +329,7 @@ export function SessionList() {
           </div>
         </div>
 
-        {/* Row 2: search box */}
+        {/* Row 2: search */}
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
@@ -137,88 +342,35 @@ export function SessionList() {
           }}
         />
 
-        {/* Row 3: source tabs with edge scroll fades */}
-        <div className="relative -mx-1">
-          <div
-            ref={tabRowRef}
-            onScroll={updateTabScroll}
-            className="flex items-center gap-1.5 overflow-x-auto no-scrollbar px-1 pb-0.5"
-          >
-            {TABS.map((tab) => {
-              const active = filter === tab.id;
-              const count = tab.id === "chat" ? null : counts[tab.id] ?? 0;
-              return (
-                <button
-                  key={tab.id}
-                  onClick={() => !tab.disabled && setFilter(tab.id)}
-                  disabled={tab.disabled}
-                  title={tab.disabled ? "Claude.ai chats live in the cloud — coming soon" : undefined}
-                  className="text-xs px-2.5 py-1 rounded-full flex items-center gap-1.5 flex-shrink-0 font-medium transition-colors"
-                  style={{
-                    background: active ? "var(--accent)" : "var(--bg-subtle)",
-                    color: active
-                      ? "white"
-                      : tab.disabled
-                        ? "var(--text-faint)"
-                        : "var(--text-muted)",
-                    border: `1px solid ${active ? "var(--accent)" : "var(--border)"}`,
-                    opacity: tab.disabled ? 0.45 : 1,
-                    cursor: tab.disabled ? "not-allowed" : "pointer",
-                  }}
-                >
-                  {tab.iconSource && (
-                    <ProviderIcon source={tab.iconSource} size={11} />
-                  )}
-                  <span>{tab.label}</span>
-                  {count !== null && count > 0 && (
-                    <span
-                      className="text-[10px] px-1.5 rounded-full tabular-nums leading-none py-px"
-                      style={{
-                        background: active ? "rgba(255,255,255,0.22)" : "var(--bg)",
-                        color: active ? "white" : "var(--text-faint)",
-                        minWidth: "18px",
-                        textAlign: "center",
-                      }}
-                    >
-                      {count}
-                    </span>
-                  )}
-                  {tab.disabled && (
-                    <span
-                      className="text-[8px] uppercase tracking-wider font-semibold px-1 rounded"
-                      style={{ background: "var(--bg)", color: "var(--text-faint)" }}
-                    >
-                      soon
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-          {/* Edge fades — symmetric scroll affordance; opacity reflects scroll state */}
-          <div
-            aria-hidden="true"
-            className="absolute left-0 top-0 bottom-0 w-5 pointer-events-none transition-opacity"
-            style={{
-              background: "linear-gradient(to left, transparent, var(--bg) 70%)",
-              opacity: tabScroll.left ? 1 : 0,
-            }}
+        {/* Row 3: filter dropdowns */}
+        <div className="flex items-center gap-2">
+          <ProvidersDropdown selected={selectedProviders} onChange={setSelectedProviders} />
+          <ProjectDropdown
+            projects={allProjects}
+            selected={selectedProject}
+            onChange={setSelectedProject}
           />
-          <div
-            aria-hidden="true"
-            className="absolute right-0 top-0 bottom-0 w-5 pointer-events-none transition-opacity"
-            style={{
-              background: "linear-gradient(to right, transparent, var(--bg) 70%)",
-              opacity: tabScroll.right ? 1 : 0,
-            }}
-          />
+          {hasFilters && (
+            <button
+              onClick={() => { setSelectedProviders(new Set()); setSelectedProject(null); setQuery(""); }}
+              className="text-xs px-2 py-1.5 rounded-md ml-auto"
+              style={{ color: "var(--text-faint)", background: "var(--bg-subtle)", border: "1px solid var(--border)" }}
+            >
+              Clear
+            </button>
+          )}
         </div>
       </header>
 
       <main className="flex-1 overflow-y-auto safe-bottom" style={{ background: "var(--bg)" }}>
         {filtered.length === 0 ? (
-          <EmptyState filter={filter} totalCount={counts.all} onShowAll={() => setFilter("all")} />
-        ) : (
+          <EmptyState
+            hasFilters={hasFilters}
+            totalCount={totalCount}
+            onClear={() => { setSelectedProviders(new Set()); setSelectedProject(null); setQuery(""); }}
+          />
+        ) : selectedProject ? (
+          // Single project selected — flat list, no header
           <ul>
             {filtered.map((s) => (
               <li key={s.id}>
@@ -226,6 +378,44 @@ export function SessionList() {
               </li>
             ))}
           </ul>
+        ) : (
+          // Grouped by project
+          <div>
+            {groups.map((group) => (
+              <section key={group.label}>
+                {groups.length > 1 && (
+                  <div
+                    className="px-4 py-1.5 flex items-center gap-2"
+                    style={{
+                      background: "var(--bg-subtle)",
+                      borderBottom: "1px solid var(--border)",
+                      borderTop: "1px solid var(--border)",
+                    }}
+                  >
+                    <span
+                      className="text-[11px] font-semibold tracking-wide truncate"
+                      style={{ color: "var(--text-muted)" }}
+                    >
+                      {group.label.split("/").pop() ?? group.label}
+                    </span>
+                    <span
+                      className="text-[10px] tabular-nums ml-auto flex-shrink-0"
+                      style={{ color: "var(--text-faint)", fontFamily: "var(--font-mono)" }}
+                    >
+                      {group.sessions.length}
+                    </span>
+                  </div>
+                )}
+                <ul>
+                  {group.sessions.map((s) => (
+                    <li key={s.id}>
+                      <SessionRow session={s} now={now} />
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ))}
+          </div>
         )}
       </main>
     </div>
@@ -233,13 +423,13 @@ export function SessionList() {
 }
 
 function EmptyState({
-  filter,
+  hasFilters,
   totalCount,
-  onShowAll,
+  onClear,
 }: {
-  filter: SourceFilter;
+  hasFilters: boolean;
   totalCount: number;
-  onShowAll: () => void;
+  onClear: () => void;
 }) {
   if (totalCount === 0) {
     return (
@@ -249,29 +439,23 @@ function EmptyState({
           Nothing yet
         </h2>
         <p className="text-sm" style={{ color: "var(--text-muted)" }}>
-          Start a Claude Code (or Cursor) session on your desktop — it'll appear here in real time.
+          Start a Claude Code or Cursor session on your desktop — it'll appear here in real time.
         </p>
       </div>
     );
   }
-  const label = TABS.find((t) => t.id === filter)?.label ?? "this view";
   return (
     <div className="px-6 pt-16 text-center">
       <h2 className="text-base font-medium mb-1" style={{ color: "var(--text)" }}>
-        Nothing in {label}
+        No matching sessions
       </h2>
-      <p className="text-sm mb-4" style={{ color: "var(--text-muted)" }}>
-        {filter === "cursor"
-          ? "No Cursor sessions found — open Cursor and chat there to see sessions here."
-          : `Try the All tab — ${totalCount} session${totalCount === 1 ? "" : "s"} across other sources.`}
-      </p>
-      {filter !== "all" && (
+      {hasFilters && (
         <button
-          onClick={onShowAll}
-          className="text-sm px-3 py-2 rounded-md"
+          onClick={onClear}
+          className="text-sm px-3 py-2 rounded-md mt-3"
           style={{ background: "var(--accent)", color: "white" }}
         >
-          Show all
+          Clear filters
         </button>
       )}
     </div>

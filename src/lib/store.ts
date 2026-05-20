@@ -100,8 +100,20 @@ export const useStore = create<StoreShape>((set) => ({
     }),
 }));
 
+const ACTIVE_STATUSES = new Set<string>(["running", "running-tool", "awaiting-user", "errored"]);
+
 /**
- * Sort by most-recent user activity. Float recent errored sessions to the top.
+ * Returns the timestamp used for sorting a session.
+ * Active sessions: last user message (most relevant moment).
+ * Idle sessions: last event of any kind (last activity, even if agent).
+ */
+export function sessionSortKey(s: Session): number {
+  if (ACTIVE_STATUSES.has(s.status)) return s.lastUserMessageAt || s.lastEventAt;
+  return s.lastEventAt;
+}
+
+/**
+ * Sort sessions. Float recent errored sessions to the top.
  * Pure: callers should pass the sessions object from the store and memoize
  * the result (returning a new array on every call breaks zustand v5's
  * useSyncExternalStore snapshot invariant).
@@ -113,6 +125,6 @@ export function sortSessions(sessions: Record<string, Session>): Session[] {
     const bErr = b.status === "errored" && now - b.lastEventAt < 5 * 60_000;
     if (aErr && !bErr) return -1;
     if (bErr && !aErr) return 1;
-    return (b.lastUserMessageAt || b.lastEventAt) - (a.lastUserMessageAt || a.lastEventAt);
+    return sessionSortKey(b) - sessionSortKey(a);
   });
 }
