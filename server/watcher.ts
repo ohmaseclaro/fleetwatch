@@ -131,6 +131,10 @@ export class Watcher extends BaseProvider {
   private historyState: TailState | null = null;
   private projectByPath = new Map<string, { projectPath: string; projectLabel: string }>();
   private readonly excludePathPrefixes: string[];
+  /** Polling reconciliation timer — catches fs events chokidar misses. */
+  private pollTimer: NodeJS.Timeout | null = null;
+  /** Directory rescan timer — catches new session files chokidar misses. */
+  private rescanTimer: NodeJS.Timeout | null = null;
 
   constructor(opts: WatcherOptions) {
     super(opts);
@@ -274,6 +278,20 @@ export class Watcher extends BaseProvider {
     // 1s tick for status recompute (handles idle / awaiting-user transitions)
     setInterval(() => this.registry.recomputeAll(), 1000).unref();
 
+    // 2s tick: poll tracked files. chokidar / fsevents on macOS sometimes
+    // misses appends on deep directory trees or when editors write via atomic
+    // rename. This is a cheap safety net — just an `fs.stat` per file and a
+    // size/inode comparison. Catches missed change events without re-reading
+    // any data unless something actually changed.
+    this.pollTimer = setInterval(() => this.reconcileTrackedFiles(), 2000);
+    this.pollTimer.unref?.();
+
+    // 10s tick: scan watched directories for NEW *.jsonl files chokidar's
+    // `add` event might have missed. Less frequent because directory walks
+    // are heavier than per-file stats.
+    this.rescanTimer = setInterval(() => this.rescanWatchedDirs(), 10_000);
+    this.rescanTimer.unref?.();
+
     // If we found absolutely nothing, surface that clearly to the operator.
     if (!this.claudeDir && !this.coworkDir) {
       this.skipStartup("no Claude or Cowork data found in any candidate location");
@@ -281,9 +299,69 @@ export class Watcher extends BaseProvider {
   }
 
   protected async onStop(): Promise<void> {
+    if (this.pollTimer) { clearInterval(this.pollTimer); this.pollTimer = null; }
+    if (this.rescanTimer) { clearInterval(this.rescanTimer); this.rescanTimer = null; }
     await this.projectWatcher?.close();
     await this.coworkWatcher?.close();
     await this.historyWatcher?.close();
+  }
+
+  /**
+   * Stat every tracked file and re-read any whose on-disk size or inode has
+   * drifted past our cached TailState. Catches `change` events chokidar misses
+   * (macOS fsevents on deep directories, atomic-rename writes, etc.).
+   */
+  private async reconcileTrackedFiles(): Promise<void> {
+    if (this.files.size === 0) return;
+    // Snapshot entries up front because onFileChange may mutate this.files.
+    const entries = Array.from(this.files.values());
+    for (const entry of entries) {
+      if (entry.pending || entry.queued) continue;
+      if (!entry.state) continue; // not yet initially-consumed; chokidar add will handle it
+      let st: import("node:fs").Stats | null = null;
+      try {
+        st = (await fs.stat(entry.filePath)) as any;
+      } catch {
+        // File vanished — chokidar's unlink handler will clean up; skip.
+        continue;
+      }
+      if (!st) continue;
+      const rotated = st.ino !== entry.state.inode;
+      const grew = st.size > entry.state.offset;
+      const shrank = st.size < entry.state.offset;
+      if (rotated || grew || shrank) {
+        // Reuse the normal change pipeline so dedupe / queueing still apply.
+        this.onFileChange(entry.filePath, entry.source, "poll").catch((err) => {
+          this.log(`[watcher poll] ${entry.filePath}: ${(err as Error).message}`);
+        });
+      }
+    }
+  }
+
+  /**
+   * Walk the watched roots for any *.jsonl files we don't already have in
+   * `this.files`. Catches `add` events chokidar misses.
+   */
+  private async rescanWatchedDirs(): Promise<void> {
+    const roots: Array<[string, "claude-code" | "cowork"]> = [];
+    if (this.claudeDir) roots.push([this.claudeDir, "claude-code"]);
+    if (this.coworkDir) roots.push([this.coworkDir, "cowork"]);
+    for (const [root, source] of roots) {
+      const found: string[] = [];
+      try {
+        await walk(root, found);
+      } catch {
+        continue;
+      }
+      for (const file of found) {
+        if (!file.endsWith(".jsonl")) continue;
+        if (this.files.has(file)) continue;
+        // New file we missed — feed it through the normal pipeline.
+        this.onFileChange(file, source, "rescan").catch((err) => {
+          this.log(`[watcher rescan] ${file}: ${(err as Error).message}`);
+        });
+      }
+    }
   }
 
 
