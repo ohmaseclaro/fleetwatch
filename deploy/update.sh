@@ -19,6 +19,7 @@ REPO_ROOT="${FLEETWATCH_REPO_ROOT:-/home/fleetwatch}"
 NGINX_INSTALLED="/etc/nginx/sites-available/fleetwatch-landing"
 NGINX_ENABLED="/etc/nginx/sites-enabled/fleetwatch-landing"
 CERT_PATH="/etc/letsencrypt/live/fleetwatch.ohmaseclaro.dev/fullchain.pem"
+TLS_FLAG="$REPO_ROOT/.tls-provisioned"
 
 echo "→ fleetwatch deploy starting (repo=$REPO_ROOT)"
 
@@ -31,11 +32,10 @@ echo "→ fleetwatch deploy starting (repo=$REPO_ROOT)"
 cd "$REPO_ROOT"
 
 # ─── Pick the right vhost template based on cert presence ──────────────────
-# Prefer checking the installed vhost (deploy user can always read it) over
-# the cert file directly (deploy user may lack read access to /etc/letsencrypt).
-# Fallback: try the cert path directly (works when running as root).
-_installed="$NGINX_INSTALLED"
-if grep -q "ssl_certificate" "$_installed" 2>/dev/null || [[ -f "$CERT_PATH" ]]; then
+# Use a durable flag file (.tls-provisioned) written by finalize-tls.sh so
+# the deploy user doesn't need read access to /etc/letsencrypt. Fallback: try
+# the cert path directly (works when running as root).
+if [[ -f "$TLS_FLAG" ]] || [[ -f "$CERT_PATH" ]]; then
     NGINX_TEMPLATE="$REPO_ROOT/deploy/nginx/fleetwatch-landing-host.conf"
     echo "→ cert found — using full HTTPS template"
     SMOKE_PROTO="https"
