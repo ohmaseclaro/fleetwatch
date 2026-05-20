@@ -50,6 +50,10 @@ jobs:
           script: |
             set -e
             cd ${{ secrets.FLEETWATCH_DEPLOY_DIR || '/home/fleetwatch' }}
+            # Pull FIRST (outside update.sh) so the new in-memory version of
+            # update.sh runs — see the comment in deploy/update.sh.
+            git fetch --tags origin
+            git reset --hard origin/main
             ./deploy/update.sh
 
       # Public-URL checks are best-effort:

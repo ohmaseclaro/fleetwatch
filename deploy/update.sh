@@ -22,10 +22,13 @@ CERT_PATH="/etc/letsencrypt/live/fleetwatch.ohmaseclaro.dev/fullchain.pem"
 
 echo "→ fleetwatch deploy starting (repo=$REPO_ROOT)"
 
-# ─── Pull latest ────────────────────────────────────────────────────────────
+# ─── Working tree must already be up-to-date ────────────────────────────────
+# We deliberately do NOT `git pull` inside this script — if we did, the
+# script would update its own source on disk while still running the
+# in-memory copy from before the pull, and any new behavior wouldn't take
+# effect until the NEXT run. Instead the caller (CI workflow, or a human
+# running manually) pulls first, then invokes update.sh.
 cd "$REPO_ROOT"
-git fetch --tags origin
-git reset --hard origin/main
 
 # ─── Pick the right vhost template based on cert presence ──────────────────
 if [[ -f "$CERT_PATH" ]]; then
