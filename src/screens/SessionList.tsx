@@ -5,7 +5,123 @@ import { useStore, sortSessions, sessionSortKey } from "../lib/store";
 import { SessionRow } from "../components/SessionRow";
 import { ConnectionPill } from "../components/ConnectionPill";
 import { ProviderIcon } from "../components/ProviderIcon";
-import type { Session, SessionSource } from "../../shared/types";
+import type { Session, SessionSource, SessionStatus } from "../../shared/types";
+
+// ─── Status filter ───────────────────────────────────────────────────────────
+
+/** UI status category → the raw SessionStatus values it covers. */
+const STATUS_CATS = [
+  { id: "running", label: "Running",  dot: "var(--status-running)", statuses: ["running", "running-tool"] as SessionStatus[] },
+  { id: "waiting", label: "Waiting",  dot: "var(--status-waiting)", statuses: ["awaiting-user"]            as SessionStatus[] },
+  { id: "idle",    label: "Idle",     dot: "var(--text-faint)",     statuses: ["idle"]                     as SessionStatus[] },
+  { id: "errored", label: "Errored",  dot: "var(--status-error)",   statuses: ["errored"]                  as SessionStatus[] },
+] as const;
+
+type StatusCat = (typeof STATUS_CATS)[number]["id"];
+
+/** Default = "Active": everything except idle. */
+const DEFAULT_STATUS = new Set<StatusCat>(["running", "waiting", "errored"]);
+
+function sameStatusSet(a: Set<StatusCat>, b: Set<StatusCat>) {
+  if (a.size !== b.size) return false;
+  for (const x of a) if (!b.has(x)) return false;
+  return true;
+}
+
+function StatusDropdown({
+  selected,
+  onChange,
+}: {
+  selected: Set<StatusCat>;
+  onChange: (next: Set<StatusCat>) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  const allSelected = selected.size === STATUS_CATS.length;
+  const isDefault   = sameStatusSet(selected, DEFAULT_STATUS);
+  const label = allSelected ? "All" : isDefault ? "Active" : [...STATUS_CATS.filter((c) => selected.has(c.id)).map((c) => c.label)].join(", ");
+  const isFiltered = !isDefault;
+
+  function toggle(id: StatusCat) {
+    const next = new Set(selected);
+    if (next.has(id)) { next.delete(id); } else { next.add(id); }
+    onChange(next.size === 0 ? new Set(DEFAULT_STATUS) : next);
+  }
+
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <button
+        onClick={() => setOpen((p) => !p)}
+        className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-md font-medium transition-colors"
+        style={{
+          background: isFiltered ? "var(--accent)" : "var(--bg-subtle)",
+          color: isFiltered ? "white" : "var(--text-muted)",
+          border: `1px solid ${isFiltered ? "var(--accent)" : "var(--border)"}`,
+          maxWidth: "140px",
+        }}
+      >
+        <span className="truncate">{label}</span>
+        <ChevronDown size={10} className="flex-shrink-0" style={{ opacity: 0.7 }} />
+      </button>
+
+      {open && (
+        <div
+          className="absolute left-0 top-full mt-1 rounded-lg z-50 overflow-hidden"
+          style={{
+            background: "var(--bg-elevated)",
+            border: "1px solid var(--border)",
+            boxShadow: "0 8px 24px rgba(0,0,0,0.35)",
+            minWidth: "148px",
+          }}
+        >
+          {/* Presets */}
+          <div style={{ borderBottom: "1px solid var(--border)" }}>
+            <button
+              onClick={() => { onChange(new Set(DEFAULT_STATUS)); setOpen(false); }}
+              className="w-full text-left px-3 py-2 text-xs hover:opacity-80"
+              style={{ color: isDefault ? "var(--accent)" : "var(--text-muted)", fontWeight: isDefault ? 600 : 400 }}
+            >
+              Active (default)
+            </button>
+            <button
+              onClick={() => { onChange(new Set(STATUS_CATS.map((c) => c.id))); setOpen(false); }}
+              className="w-full text-left px-3 py-2 text-xs hover:opacity-80"
+              style={{ color: allSelected ? "var(--accent)" : "var(--text-muted)", fontWeight: allSelected ? 600 : 400 }}
+            >
+              All statuses
+            </button>
+          </div>
+          {/* Individual toggles */}
+          {STATUS_CATS.map((cat) => (
+            <label key={cat.id} className="flex items-center gap-2.5 px-3 py-2 cursor-pointer hover:opacity-80">
+              <input
+                type="checkbox"
+                checked={allSelected || selected.has(cat.id)}
+                onChange={() => toggle(cat.id)}
+                className="accent-accent"
+              />
+              <span
+                className="inline-block w-2 h-2 rounded-full flex-shrink-0"
+                style={{ background: cat.dot }}
+              />
+              <span className="text-xs" style={{ color: "var(--text)" }}>{cat.label}</span>
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ─── Provider multi-select dropdown ─────────────────────────────────────────
 
@@ -241,6 +357,7 @@ export function SessionList() {
   const [now, setNow] = useState(Date.now());
   const [selectedProviders, setSelectedProviders] = useState<Set<SessionSource>>(new Set());
   const [selectedProject, setSelectedProject] = useState<string | null>(null);
+  const [selectedStatus, setSelectedStatus] = useState<Set<StatusCat>>(new Set(DEFAULT_STATUS));
   const [query, setQuery] = useState("");
 
   useEffect(() => {
@@ -249,6 +366,15 @@ export function SessionList() {
   }, []);
 
   const sessions = useMemo(() => sortSessions(sessionsMap), [sessionsMap, now]);
+
+  // Flatten selected status categories → set of raw SessionStatus values.
+  const allowedStatuses = useMemo<Set<SessionStatus>>(() => {
+    const s = new Set<SessionStatus>();
+    for (const cat of STATUS_CATS) {
+      if (selectedStatus.has(cat.id)) cat.statuses.forEach((x) => s.add(x));
+    }
+    return s;
+  }, [selectedStatus]);
 
   // Unique sorted project labels from all non-compacted sessions.
   const allProjects = useMemo(() => {
@@ -267,6 +393,7 @@ export function SessionList() {
   const filtered = useMemo(() => {
     let list = sessions.filter((s) => {
       if (s.status === "compacted") return false;
+      if (!allowedStatuses.has(s.status)) return false;
       if (selectedProviders.size > 0 && !selectedProviders.has(s.source)) return false;
       if (selectedProject && s.projectLabel !== selectedProject) return false;
       return true;
@@ -282,7 +409,7 @@ export function SessionList() {
       );
     }
     return list;
-  }, [sessions, selectedProviders, selectedProject, query]);
+  }, [sessions, allowedStatuses, selectedProviders, selectedProject, query]);
 
   // Group sessions by project. Flat list when a single project is selected.
   const groups = useMemo<ProjectGroup[]>(() => {
@@ -292,7 +419,11 @@ export function SessionList() {
     return buildGroups(filtered);
   }, [filtered, selectedProject]);
 
-  const hasFilters = selectedProviders.size > 0 || selectedProject !== null || query.trim() !== "";
+  const hasFilters =
+    selectedProviders.size > 0 ||
+    selectedProject !== null ||
+    query.trim() !== "" ||
+    !sameStatusSet(selectedStatus, DEFAULT_STATUS);
 
   return (
     <div className="flex flex-col flex-1 min-h-full">
@@ -343,7 +474,8 @@ export function SessionList() {
         />
 
         {/* Row 3: filter dropdowns */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <StatusDropdown selected={selectedStatus} onChange={setSelectedStatus} />
           <ProvidersDropdown selected={selectedProviders} onChange={setSelectedProviders} />
           <ProjectDropdown
             projects={allProjects}
@@ -352,7 +484,12 @@ export function SessionList() {
           />
           {hasFilters && (
             <button
-              onClick={() => { setSelectedProviders(new Set()); setSelectedProject(null); setQuery(""); }}
+              onClick={() => {
+                setSelectedProviders(new Set());
+                setSelectedProject(null);
+                setSelectedStatus(new Set(DEFAULT_STATUS));
+                setQuery("");
+              }}
               className="text-xs px-2 py-1.5 rounded-md ml-auto"
               style={{ color: "var(--text-faint)", background: "var(--bg-subtle)", border: "1px solid var(--border)" }}
             >
@@ -367,7 +504,7 @@ export function SessionList() {
           <EmptyState
             hasFilters={hasFilters}
             totalCount={totalCount}
-            onClear={() => { setSelectedProviders(new Set()); setSelectedProject(null); setQuery(""); }}
+            onClear={() => { setSelectedProviders(new Set()); setSelectedProject(null); setSelectedStatus(new Set(DEFAULT_STATUS)); setQuery(""); }}
           />
         ) : selectedProject ? (
           // Single project selected — flat list, no header
