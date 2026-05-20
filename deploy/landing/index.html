@@ -1,0 +1,810 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>fleetwatch — watch every Claude Code, Cowork & Cursor session from your phone</title>
+    <meta
+      name="description"
+      content="One npx command turns your laptop into a live dashboard for every AI coding-agent session. Pair your phone via QR (or ngrok), watch sessions stream in real time — message-by-message, tool-call-by-tool-call, screenshot-by-screenshot."
+    />
+    <meta name="theme-color" content="#1F1D18" />
+
+    <link rel="icon" type="image/png" sizes="512x512" href="/img/icon-512.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/img/icon-512.png" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://fleetwatch.ohmaseclaro.dev" />
+    <meta property="og:title" content="fleetwatch — observability for AI coding agents" />
+    <meta
+      property="og:description"
+      content="Watch every Claude Code, Cowork, and Cursor session from your phone — live."
+    />
+    <meta property="og:image" content="https://fleetwatch.ohmaseclaro.dev/img/og-1200.jpg" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="675" />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="fleetwatch — observability for AI coding agents" />
+    <meta
+      name="twitter:description"
+      content="Watch every Claude Code, Cowork, and Cursor session from your phone — live."
+    />
+    <meta name="twitter:image" content="https://fleetwatch.ohmaseclaro.dev/img/og-1200.jpg" />
+
+    <link
+      rel="preload"
+      as="image"
+      href="/img/hero-1600.jpg"
+      imagesrcset="/img/hero-1600.jpg 1600w"
+    />
+
+    <style>
+      :root {
+        --bg: #16140f;
+        --bg-soft: #1f1d18;
+        --bg-elevated: #26241e;
+        --bg-subtle: #2b2922;
+        --text: #f0eee6;
+        --text-muted: #b5ae9d;
+        --text-faint: #80796a;
+        --accent: #d97757;
+        --accent-soft: #4a2e22;
+        --accent-bg: rgba(217, 119, 87, 0.12);
+        --border: #38352d;
+        --border-strong: #4a463c;
+        --status-green: #4ade80;
+        --code-bg: #0e0c09;
+        --radius: 14px;
+        --radius-lg: 22px;
+        --font: "Inter", ui-sans-serif, system-ui, -apple-system, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+        --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+        --font-serif: "Tiempos Text", "Source Serif Pro", Georgia, serif;
+        --shadow-elev: 0 1px 1px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.4);
+      }
+
+      * { box-sizing: border-box; }
+      html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+      body {
+        margin: 0;
+        font-family: var(--font);
+        background: var(--bg);
+        color: var(--text);
+        line-height: 1.6;
+        font-size: 16px;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+      }
+      a { color: var(--accent); text-decoration: none; transition: opacity 0.15s; }
+      a:hover { opacity: 0.78; }
+      code, pre, kbd { font-family: var(--font-mono); }
+
+      /* ─── Layout ─────────────────────────────────────────────────────────── */
+      .container {
+        max-width: 1080px;
+        margin: 0 auto;
+        padding: 0 1.5rem;
+      }
+      .narrow {
+        max-width: 760px;
+      }
+
+      /* ─── Nav ────────────────────────────────────────────────────────────── */
+      nav {
+        position: sticky;
+        top: 0;
+        z-index: 20;
+        background: rgba(22, 20, 15, 0.78);
+        backdrop-filter: saturate(140%) blur(14px);
+        -webkit-backdrop-filter: saturate(140%) blur(14px);
+        border-bottom: 1px solid var(--border);
+      }
+      nav .row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0.9rem 0;
+      }
+      .brand {
+        font-weight: 700;
+        font-size: 1.05rem;
+        letter-spacing: -0.02em;
+        color: var(--text);
+        display: inline-flex;
+        align-items: center;
+        gap: 0.55rem;
+      }
+      .brand .mark {
+        width: 22px;
+        height: 22px;
+        border-radius: 6px;
+        background:
+          radial-gradient(circle at 30% 30%, var(--accent) 0%, var(--accent-soft) 75%);
+        box-shadow: 0 0 0 1px var(--accent-soft), 0 0 18px rgba(217, 119, 87, 0.35);
+      }
+      .brand small {
+        font-weight: 500;
+        color: var(--text-faint);
+        margin-left: 0.4rem;
+        font-size: 0.78rem;
+        letter-spacing: 0;
+        font-family: var(--font-mono);
+      }
+      .nav-links {
+        display: flex;
+        gap: 1.4rem;
+        align-items: center;
+        font-size: 0.92rem;
+      }
+      .nav-links a {
+        color: var(--text-muted);
+      }
+      .nav-links a:hover {
+        color: var(--text);
+        opacity: 1;
+      }
+      .nav-cta {
+        background: var(--accent);
+        color: #fff !important;
+        padding: 0.5rem 0.9rem;
+        border-radius: 8px;
+        font-weight: 600;
+        font-size: 0.9rem;
+      }
+      .nav-cta:hover { opacity: 1; background: #e08763; }
+
+      @media (max-width: 640px) {
+        .nav-links a:not(.nav-cta) { display: none; }
+      }
+
+      /* ─── Hero ───────────────────────────────────────────────────────────── */
+      .hero {
+        padding: 5rem 0 3rem;
+        position: relative;
+        overflow: hidden;
+      }
+      .hero::before {
+        content: "";
+        position: absolute;
+        inset: -10% -20% auto -20%;
+        height: 70%;
+        background:
+          radial-gradient(ellipse 55% 60% at 50% 0%, rgba(217, 119, 87, 0.18) 0%, transparent 60%);
+        pointer-events: none;
+        z-index: 0;
+      }
+      .hero-inner {
+        position: relative;
+        z-index: 1;
+        text-align: center;
+      }
+      .eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        font-size: 0.78rem;
+        font-family: var(--font-mono);
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+        color: var(--accent);
+        background: var(--accent-bg);
+        border: 1px solid var(--accent-soft);
+        padding: 0.35rem 0.85rem;
+        border-radius: 999px;
+        margin-bottom: 1.5rem;
+      }
+      .eyebrow .dot {
+        width: 6px; height: 6px; border-radius: 50%;
+        background: var(--status-green);
+        box-shadow: 0 0 0 3px rgba(74, 222, 128, 0.18);
+      }
+      h1 {
+        font-size: clamp(2.4rem, 6vw, 4.1rem);
+        line-height: 1.04;
+        letter-spacing: -0.035em;
+        font-weight: 700;
+        margin: 0 0 1.2rem;
+        background: linear-gradient(180deg, var(--text) 0%, var(--text-muted) 100%);
+        -webkit-background-clip: text;
+        background-clip: text;
+        -webkit-text-fill-color: transparent;
+      }
+      h1 em {
+        font-family: var(--font-serif);
+        font-style: italic;
+        font-weight: 400;
+        background: linear-gradient(180deg, var(--accent) 0%, #e8956f 100%);
+        -webkit-background-clip: text;
+        background-clip: text;
+        -webkit-text-fill-color: transparent;
+      }
+      .hero p.lede {
+        font-size: clamp(1.05rem, 1.7vw, 1.25rem);
+        color: var(--text-muted);
+        max-width: 640px;
+        margin: 0 auto 2.2rem;
+        line-height: 1.55;
+      }
+
+      /* ─── Install command block ─────────────────────────────────────────── */
+      .install {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.6rem;
+        background: var(--code-bg);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 0.65rem 0.85rem 0.65rem 1rem;
+        font-family: var(--font-mono);
+        font-size: 0.95rem;
+        margin-bottom: 1.2rem;
+        max-width: 100%;
+        cursor: pointer;
+        transition: border-color 0.15s, background 0.15s;
+      }
+      .install:hover {
+        border-color: var(--accent-soft);
+        background: #0a0908;
+      }
+      .install .prompt { color: var(--text-faint); user-select: none; }
+      .install .cmd { color: var(--text); }
+      .install .copy-btn {
+        margin-left: 0.4rem;
+        background: transparent;
+        border: 1px solid var(--border);
+        color: var(--text-faint);
+        border-radius: 6px;
+        padding: 0.25rem 0.5rem;
+        font-size: 0.7rem;
+        font-family: var(--font);
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        cursor: pointer;
+        transition: color 0.15s, border-color 0.15s;
+      }
+      .install .copy-btn:hover { color: var(--text); border-color: var(--border-strong); }
+      .install .copy-btn.ok { color: var(--status-green); border-color: var(--status-green); }
+
+      .hero-meta {
+        display: flex;
+        gap: 1.2rem;
+        justify-content: center;
+        font-size: 0.82rem;
+        color: var(--text-faint);
+        font-family: var(--font-mono);
+        margin-top: 0.4rem;
+        flex-wrap: wrap;
+      }
+      .hero-meta a { color: var(--text-faint); }
+      .hero-meta a:hover { color: var(--accent); opacity: 1; }
+
+      /* ─── Hero image ─────────────────────────────────────────────────────── */
+      .hero-figure {
+        margin-top: 3.5rem;
+        position: relative;
+        z-index: 1;
+      }
+      .hero-figure .frame {
+        position: relative;
+        border-radius: var(--radius-lg);
+        overflow: hidden;
+        background: var(--bg-soft);
+        border: 1px solid var(--border);
+        box-shadow:
+          0 4px 12px rgba(0, 0, 0, 0.3),
+          0 24px 60px rgba(0, 0, 0, 0.45),
+          0 0 0 1px var(--border);
+        aspect-ratio: 16 / 9;
+      }
+      .hero-figure img {
+        display: block;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+      .hero-figure::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        border-radius: var(--radius-lg);
+        pointer-events: none;
+        background: linear-gradient(180deg, transparent 0%, transparent 60%, var(--bg) 100%);
+      }
+
+      /* ─── Section primitives ────────────────────────────────────────────── */
+      section {
+        padding: 5rem 0;
+        position: relative;
+      }
+      .kicker {
+        font-size: 0.72rem;
+        font-family: var(--font-mono);
+        text-transform: uppercase;
+        letter-spacing: 0.16em;
+        color: var(--accent);
+        margin-bottom: 0.7rem;
+      }
+      h2 {
+        font-size: clamp(1.7rem, 3.3vw, 2.4rem);
+        line-height: 1.15;
+        letter-spacing: -0.025em;
+        font-weight: 700;
+        margin: 0 0 1rem;
+      }
+      h2 em {
+        font-family: var(--font-serif);
+        font-style: italic;
+        font-weight: 400;
+        color: var(--accent);
+      }
+      section p.dek {
+        color: var(--text-muted);
+        font-size: 1.05rem;
+        margin: 0 0 2.5rem;
+        max-width: 620px;
+      }
+
+      /* ─── Providers grid ─────────────────────────────────────────────────── */
+      .providers {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 1rem;
+      }
+      .provider-card {
+        background: var(--bg-soft);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 1.4rem;
+        transition: border-color 0.18s, transform 0.18s;
+      }
+      .provider-card:hover {
+        border-color: var(--accent-soft);
+        transform: translateY(-2px);
+      }
+      .provider-card .icon-wrap {
+        width: 38px; height: 38px;
+        border-radius: 10px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 0.9rem;
+      }
+      .provider-card.claude .icon-wrap {
+        background: rgba(217, 119, 87, 0.14);
+        color: var(--accent);
+      }
+      .provider-card.cowork .icon-wrap {
+        background: rgba(155, 135, 245, 0.14);
+        color: #a89df7;
+      }
+      .provider-card.cursor .icon-wrap {
+        background: rgba(77, 171, 247, 0.14);
+        color: #5fb9ff;
+      }
+      .provider-card.coming .icon-wrap {
+        background: var(--bg-subtle);
+        color: var(--text-faint);
+      }
+      .provider-card h3 {
+        margin: 0 0 0.35rem;
+        font-size: 1rem;
+        letter-spacing: -0.01em;
+      }
+      .provider-card .source {
+        font-family: var(--font-mono);
+        font-size: 0.78rem;
+        color: var(--text-faint);
+        margin-bottom: 0.6rem;
+        overflow-wrap: anywhere;
+      }
+      .provider-card p {
+        font-size: 0.9rem;
+        color: var(--text-muted);
+        margin: 0;
+        line-height: 1.5;
+      }
+      .badge-soon {
+        display: inline-block;
+        font-size: 0.65rem;
+        font-family: var(--font-mono);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        background: var(--bg-subtle);
+        color: var(--text-faint);
+        padding: 0.15rem 0.45rem;
+        border-radius: 4px;
+        margin-left: 0.4rem;
+        vertical-align: middle;
+      }
+
+      /* ─── Features ─────────────────────────────────────────────────────── */
+      .features {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 1.5rem 2rem;
+      }
+      .feature h3 {
+        font-size: 0.98rem;
+        margin: 0 0 0.5rem;
+        letter-spacing: -0.005em;
+      }
+      .feature h3::before {
+        content: "›";
+        color: var(--accent);
+        margin-right: 0.45rem;
+        font-weight: 600;
+      }
+      .feature p {
+        font-size: 0.92rem;
+        color: var(--text-muted);
+        margin: 0;
+        line-height: 1.55;
+      }
+
+      /* ─── Banner / terminal output ───────────────────────────────────────── */
+      .terminal {
+        background: var(--code-bg);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 1.4rem 1.6rem;
+        overflow-x: auto;
+        font-family: var(--font-mono);
+        font-size: 0.78rem;
+        line-height: 1.55;
+        color: var(--text-muted);
+        white-space: pre;
+        box-shadow: inset 0 0 60px rgba(217, 119, 87, 0.04);
+      }
+      .terminal .header {
+        display: flex;
+        gap: 0.4rem;
+        margin-bottom: 1rem;
+      }
+      .terminal .dot {
+        width: 11px; height: 11px;
+        border-radius: 50%;
+        background: var(--border-strong);
+      }
+      .terminal .dot:nth-child(1) { background: #ff5f57; }
+      .terminal .dot:nth-child(2) { background: #febc2e; }
+      .terminal .dot:nth-child(3) { background: #28c840; }
+      .terminal .accent { color: var(--accent); }
+      .terminal .dim { color: var(--text-faint); }
+      .terminal .green { color: var(--status-green); }
+      .terminal .qr {
+        color: var(--text);
+        line-height: 1.05;
+        font-size: 0.62rem;
+      }
+
+      /* ─── Code blocks ────────────────────────────────────────────────────── */
+      pre.codeblock {
+        background: var(--code-bg);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 1rem 1.1rem;
+        overflow-x: auto;
+        font-size: 0.86rem;
+        line-height: 1.6;
+        color: var(--text);
+      }
+      pre.codeblock .c { color: var(--text-faint); }
+      pre.codeblock .k { color: var(--accent); }
+
+      /* ─── Footer ────────────────────────────────────────────────────────── */
+      footer {
+        padding: 3rem 0 4rem;
+        border-top: 1px solid var(--border);
+        color: var(--text-faint);
+        font-size: 0.85rem;
+      }
+      footer .row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 1rem;
+      }
+      footer a { color: var(--text-muted); }
+      footer .tag { font-family: var(--font-mono); font-size: 0.78rem; }
+
+      /* ─── Subtle grid background on hero ─────────────────────────────────── */
+      .hero::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background-image:
+          linear-gradient(rgba(217, 119, 87, 0.04) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(217, 119, 87, 0.04) 1px, transparent 1px);
+        background-size: 56px 56px;
+        mask-image: radial-gradient(ellipse 70% 60% at 50% 35%, #000 0%, transparent 70%);
+        -webkit-mask-image: radial-gradient(ellipse 70% 60% at 50% 35%, #000 0%, transparent 70%);
+        pointer-events: none;
+        z-index: 0;
+      }
+
+      @media (max-width: 640px) {
+        .hero { padding: 3rem 0 2rem; }
+        section { padding: 3.5rem 0; }
+        .install { font-size: 0.85rem; padding: 0.55rem 0.7rem; }
+      }
+    </style>
+  </head>
+  <body>
+    <!-- ─── Nav ───────────────────────────────────────────────────────────── -->
+    <nav>
+      <div class="container">
+        <div class="row">
+          <a class="brand" href="/">
+            <span class="mark"></span>
+            <span>fleetwatch</span>
+            <small>v0.1.3</small>
+          </a>
+          <div class="nav-links">
+            <a href="#providers">Providers</a>
+            <a href="#features">Features</a>
+            <a href="#install">Install</a>
+            <a href="https://github.com/ohmaseclaro/fleetwatch" target="_blank" rel="noopener">GitHub</a>
+            <a class="nav-cta" href="https://www.npmjs.com/package/@ohmaseclaro/fleetwatch" target="_blank" rel="noopener">npm</a>
+          </div>
+        </div>
+      </div>
+    </nav>
+
+    <!-- ─── Hero ──────────────────────────────────────────────────────────── -->
+    <header class="hero">
+      <div class="container hero-inner">
+        <div class="eyebrow">
+          <span class="dot"></span>
+          Live observability for AI coding agents
+        </div>
+        <h1>
+          Watch every<br />
+          coding agent <em>live</em><br />
+          from your phone.
+        </h1>
+        <p class="lede">
+          One command spins up a local daemon that tails Claude Code, Cowork, and
+          Cursor sessions and streams them to a mobile-friendly web UI. Pair via
+          QR, or open from anywhere via the auto ngrok tunnel.
+        </p>
+
+        <button class="install" type="button" onclick="copyInstall()" aria-label="Copy install command">
+          <span class="prompt">$</span>
+          <span class="cmd">npx @ohmaseclaro/fleetwatch</span>
+          <span class="copy-btn" id="copyBtn">Copy</span>
+        </button>
+
+        <div class="hero-meta">
+          <span>MIT licensed</span>
+          <span>·</span>
+          <span>Node 20+</span>
+          <span>·</span>
+          <a href="https://github.com/ohmaseclaro/fleetwatch" target="_blank" rel="noopener">View source ↗</a>
+        </div>
+
+        <figure class="hero-figure">
+          <div class="frame">
+            <img src="/img/hero-1600.jpg" alt="fleetwatch — constellation of agent sessions" width="1600" height="900" />
+          </div>
+        </figure>
+      </div>
+    </header>
+
+    <!-- ─── What you see ──────────────────────────────────────────────────── -->
+    <section id="terminal" class="section-terminal">
+      <div class="container narrow">
+        <div class="kicker">Boot output</div>
+        <h2>Run it once, <em>scan the QR</em>, watch your fleet.</h2>
+        <p class="dek">
+          The daemon auto-discovers Claude Code, Cowork, and Cursor data wherever
+          you've installed them — and auto-picks up your ngrok authtoken from
+          <code>~/.../ngrok.yml</code> if it's there.
+        </p>
+        <div class="terminal" aria-label="example terminal output">
+          <div class="header"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
+<span class="dim">$ npx @ohmaseclaro/fleetwatch</span>
+
+<span class="dim">[ngrok] connecting tunnel…</span>
+<span class="dim">[ngrok] tunnel active: https://given-relapsing-plop.ngrok-free.dev</span>
+  <span class="accent">↻ ngrok tunnel ready — updated QR:</span>
+
+  <span class="accent">fleetwatch</span>  v0.1.3
+  ─────────────────────────────────────────
+
+  Open this on your phone <span class="green">(works anywhere — via ngrok)</span>:
+
+     <span class="accent">https://given-relapsing-plop.ngrok-free.dev/?token=…</span>
+
+  Or scan the QR code below:
+
+<span class="qr">  ▄▄▄▄▄▄▄ ▄   ▄▄   ▄▄▄  ▄  ▄▄▄▄ ▄▄▄▄▄▄▄
+  █ ▄▄▄ █   █▀ ▄  ▀██▀ ▄▄▄█▀▄ ▀ █ ▄▄▄ █
+  █ ███ █ █ ████▀▀▄ ▄▀   ▄▀▀███ █ ███ █
+  █▄▄▄▄▄█ █▀█ ▄▀█▀▄▀▄▀▄▀▄ ▄▀▄ ▄ █▄▄▄▄▄█
+  ▄   ▄ ▄▄█▄▀▀▀█▀█ █▀▀▀█▄██   █▄▄▄▄▄  ▄
+  ▄  █▄▄▄▄▀ █▄  ▄ ███ ▀█▀▄▄ ▄█▀ ▀▄▀▀▀▀
+  ██▀▀▀█▄▀▀█ ▀ █ ▄ █▀▄▄██▀▄   █▄██▀▄██▄
+  ▀█▀▀▄▄▄▄▄ ▀█▄  ██ █   ▄█████▀▄▄▄██▄█
+  █▄█▄▄▄▄██▀ ▀▀▄▀▀ █ █ ▀▄ █▄▀█▄█▄▀▀▄█▄▀
+  ▀▄█ ▀▀▄▀▀█  ▀▄▄▄▄ ▄▀▄▀ ▄ ▀ █▄██▀██▄▀
+    ▄██▄▄▀▀  ▄█▄▀█ █ ▄▀█▄█▄ ▀█▀▄▄█▀ █▀
+  █▀▀█ █▄▄  █▄ █ ██ ▄ ▄▄██ ▀▄█▄▀ ██▄▄▄
+  █ █  ▀▄██ ▄▄ ▀▄▄ █▄█▀█ ▄▀  ▄▄▄██▀▄███
+  ▀▀▀█▀▀▄▀ ▀▄▀▀▄▄██   ▄▄███▀ ██▀▀▄▀▀▀
+  ▄▄▄██▀▄██▀▄▀▄ ██▀█ ▄██▀ ▄   ▄███▄ █ █
+  ▄▄▄▄▄▄▄ █▀█▄▄ ▀█ ▄▀   ▄█▄█  █ ▄ █  ▀
+  █ ▄▄▄ █ ▄  ▄▀▄█▀▄▀▀▀████    █▄▄▄███▄▄
+  █ ███ █  ▄▀ ▀▀██ ▄█▀ ▀ ▄ █▀▀▄██▀  ▀▀▀
+  █▄▄▄▄▄█ ▄▄▀█ ███ █▀▀█████ ▀█ ▀ ▄▀ ██▄
+ ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀</span>
+
+  <span class="dim">Host:</span>    your-machine
+  <span class="dim">Port:</span>    7878
+  <span class="dim">Tunnel:</span>  <span class="green">https://given-relapsing-plop.ngrok-free.dev</span>
+  <span class="dim">Auth:</span>    pairing token only <span class="dim">(set PASSWORD to add a password)</span>
+  <span class="dim">Cowork:</span>  off (toggle in Settings)
+
+  Press <span class="accent">Ctrl+C</span> to stop.
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── Providers ─────────────────────────────────────────────────────── -->
+    <section id="providers">
+      <div class="container">
+        <div class="kicker">Three providers, auto-discovered</div>
+        <h2>Speaks the format <em>every agent writes</em>.</h2>
+        <p class="dek">
+          Each provider is independent and lazy — it surfaces session metadata
+          immediately and only loads the heavy event stream when you open a
+          session on your phone.
+        </p>
+        <div class="providers">
+          <div class="provider-card claude">
+            <div class="icon-wrap">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.5 L13.2 9.2 L19.8 8.3 L14.7 12 L19.8 15.7 L13.2 14.8 L12 21.5 L10.8 14.8 L4.2 15.7 L9.3 12 L4.2 8.3 L10.8 9.2 Z"/></svg>
+            </div>
+            <h3>Claude Code</h3>
+            <div class="source">~/.claude/projects/*.jsonl</div>
+            <p>Live tailing via chokidar. Rotation-safe (inode + offset). Auto-discovers via env override, XDG path, or bounded filesystem search.</p>
+          </div>
+          <div class="provider-card cowork">
+            <div class="icon-wrap">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 3 L13 9 L19 8 L14.5 12 L19 16 L13 15 L12 21 L11 15 L5 16 L9.5 12 L5 8 L11 9 Z" opacity="0.85"/>
+                <path d="M16 16 a3 3 0 1 0 0 -4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+              </svg>
+            </div>
+            <h3>Cowork</h3>
+            <div class="source">Application Support / Claude / local-agent-mode-sessions</div>
+            <p>Same JSONL format, different parent path. Auto-discovered when Claude Cowork is installed; ignored cleanly when it isn't.</p>
+          </div>
+          <div class="provider-card cursor">
+            <div class="icon-wrap">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M5 3.5 L19.5 11.5 L13 12.5 L17 19.5 L14 21 L10.5 14 L5 19 Z"/></svg>
+            </div>
+            <h3>Cursor IDE</h3>
+            <div class="source">~/Library/Application Support/Cursor/User/globalStorage/state.vscdb</div>
+            <p>SQLite, read-only. WAL-file watching for live updates. Verifier checks for the <code>cursorDiskKV</code> table so VSCode's same-named DB never gets misidentified.</p>
+          </div>
+          <div class="provider-card coming">
+            <div class="icon-wrap">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+            </div>
+            <h3>Your agent <span class="badge-soon">add yours</span></h3>
+            <div class="source">extends BaseProvider — 5-step recipe</div>
+            <p>Aider, Continue, custom internal agents — declare a ProviderInfo + DiscoverySpec, implement onStart and backfillSession. <a href="https://github.com/ohmaseclaro/fleetwatch/blob/main/docs/ADD_A_PROVIDER.md" target="_blank" rel="noopener">Read the guide ↗</a></p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── Features ──────────────────────────────────────────────────────── -->
+    <section id="features">
+      <div class="container">
+        <div class="kicker">What's in the box</div>
+        <h2>Sensible defaults, <em>opinionated security</em>.</h2>
+        <div class="features">
+          <div class="feature">
+            <h3>Live WebSocket streaming</h3>
+            <p>Events arrive on your phone within milliseconds of being written. No polling, no refresh.</p>
+          </div>
+          <div class="feature">
+            <h3>Source tabs with brand icons</h3>
+            <p>Claude, Cowork, Cursor — filter at a glance. Color-coded left-edge stripe for active sessions.</p>
+          </div>
+          <div class="feature">
+            <h3>Image attachments + lightbox</h3>
+            <p>Screenshots from screenshot tools and user-pasted images render inline. Tap to zoom.</p>
+          </div>
+          <div class="feature">
+            <h3>Session info modal</h3>
+            <p>Tap (i) on any session to see the transcript file path, project, git branch, size — with copy buttons.</p>
+          </div>
+          <div class="feature">
+            <h3>Auto ngrok tunnel</h3>
+            <p>Picks up <code>~/.../ngrok.yml</code> automatically. Works on cellular, coffee shops, anywhere.</p>
+          </div>
+          <div class="feature">
+            <h3>Optional password gate</h3>
+            <p>Set <code>PASSWORD=…</code> in <code>.env</code>. Bcrypt-hashed in memory only; 30-day JWT after login.</p>
+          </div>
+          <div class="feature">
+            <h3>Robust discovery</h3>
+            <p>Env override → known paths → bounded filesystem search, with verify predicates so providers never collide.</p>
+          </div>
+          <div class="feature">
+            <h3>Read-only by design</h3>
+            <p>Never writes to source data. Opens DBs read-only. Never follows symlinks. Inodes tracked for safe rotation.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── Install ──────────────────────────────────────────────────────── -->
+    <section id="install">
+      <div class="container narrow">
+        <div class="kicker">Install</div>
+        <h2>One command. <em>That's the whole setup.</em></h2>
+        <p class="dek">No accounts. No config files. Sane defaults that work the moment you run it.</p>
+
+        <h3 style="margin: 2rem 0 0.6rem; font-size: 0.95rem; color: var(--text-muted);">Run without installing</h3>
+        <pre class="codeblock"><span class="c"># Auto-discovers Claude / Cursor data, prints QR + URL.</span>
+<span class="k">npx</span> @ohmaseclaro/fleetwatch</pre>
+
+        <h3 style="margin: 2rem 0 0.6rem; font-size: 0.95rem; color: var(--text-muted);">Install globally</h3>
+        <pre class="codeblock"><span class="k">npm</span> install -g @ohmaseclaro/fleetwatch
+fleetwatch</pre>
+
+        <h3 style="margin: 2rem 0 0.6rem; font-size: 0.95rem; color: var(--text-muted);">Enable ngrok (for access from anywhere)</h3>
+        <pre class="codeblock"><span class="c"># 1. Sign up free: https://dashboard.ngrok.com/signup
+# 2. Copy your token: https://dashboard.ngrok.com/get-started/your-authtoken
+# 3. Run with the token (persisted to ~/.config/fleetwatch/config.json):</span>
+fleetwatch --ngrok-authtoken <span class="k">&lt;your-token&gt;</span></pre>
+
+        <h3 style="margin: 2rem 0 0.6rem; font-size: 0.95rem; color: var(--text-muted);">Add a password (recommended with ngrok)</h3>
+        <pre class="codeblock"><span class="c"># bcrypt-hashed in memory only; never persisted to disk.</span>
+echo <span class="k">'PASSWORD=correct horse battery staple'</span> &gt;&gt; .env
+fleetwatch</pre>
+      </div>
+    </section>
+
+    <!-- ─── Footer ───────────────────────────────────────────────────────── -->
+    <footer>
+      <div class="container">
+        <div class="row">
+          <div>
+            <strong style="color: var(--text);">fleetwatch</strong>
+            <span class="tag" style="margin-left: 0.5rem;">v0.1.3</span>
+            <div style="margin-top: 0.4rem;">MIT © Augusto Claro</div>
+          </div>
+          <div>
+            <a href="https://github.com/ohmaseclaro/fleetwatch" target="_blank" rel="noopener">GitHub</a>
+            <span style="margin: 0 0.5rem; color: var(--border-strong);">·</span>
+            <a href="https://www.npmjs.com/package/@ohmaseclaro/fleetwatch" target="_blank" rel="noopener">npm</a>
+            <span style="margin: 0 0.5rem; color: var(--border-strong);">·</span>
+            <a href="https://github.com/ohmaseclaro/fleetwatch/blob/main/docs/ADD_A_PROVIDER.md" target="_blank" rel="noopener">Add a provider</a>
+          </div>
+        </div>
+      </div>
+    </footer>
+
+    <script>
+      function copyInstall() {
+        const cmd = 'npx @ohmaseclaro/fleetwatch';
+        const btn = document.getElementById('copyBtn');
+        navigator.clipboard.writeText(cmd).then(() => {
+          btn.textContent = 'Copied';
+          btn.classList.add('ok');
+          setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('ok'); }, 1600);
+        }).catch(() => {
+          const ta = document.createElement('textarea');
+          ta.value = cmd; document.body.appendChild(ta); ta.select();
+          try { document.execCommand('copy'); btn.textContent = 'Copied'; btn.classList.add('ok'); setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('ok'); }, 1600); } catch {}
+          document.body.removeChild(ta);
+        });
+      }
+    </script>
+  </body>
+</html>

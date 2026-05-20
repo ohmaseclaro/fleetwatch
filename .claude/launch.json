@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "watcher",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["dist/server/index.js", "--quiet", "--port", "7890", "--no-ngrok", "--no-cursor"],
+      "port": 7890
+    }
+  ]
+}

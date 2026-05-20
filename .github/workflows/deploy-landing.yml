@@ -1,0 +1,71 @@
+name: Deploy landing (fleetwatch.ohmaseclaro.dev)
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "deploy/**"
+      - "README.md"
+      - "LICENSE"
+      - ".github/workflows/deploy-landing.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: fleetwatch-deploy-landing
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy via SSH
+    runs-on: ubuntu-latest
+    environment:
+      name: landing
+      url: https://fleetwatch.ohmaseclaro.dev
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify required secrets are present
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+        run: |
+          if [ -z "$SSH_HOST" ]; then
+            echo "::error::SSH_HOST is empty. Add it as a repo or environment secret (Settings → Secrets and variables → Actions)."
+            exit 1
+          fi
+          if [ -z "$SSH_USER" ]; then
+            echo "::error::SSH_USER is empty. Add it next to SSH_HOST (e.g. deploy)."
+            exit 1
+          fi
+
+      - name: Pull latest + reload nginx
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          timeout: 60s
+          command_timeout: 5m
+          script: |
+            set -e
+            cd ${{ secrets.FLEETWATCH_DEPLOY_DIR || '/home/fleetwatch' }}
+            ./deploy/update.sh
+
+      - name: Smoke check (public URL via Cloudflare)
+        run: |
+          STATUS=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 10 https://fleetwatch.ohmaseclaro.dev/ || echo "000")
+          echo "GET https://fleetwatch.ohmaseclaro.dev/ → $STATUS"
+          if [ "$STATUS" != "200" ]; then
+            echo "::error::Landing returned $STATUS, expected 200"
+            exit 1
+          fi
+
+      - name: Smoke check (.com → .dev redirect)
+        run: |
+          REDIRECT=$(curl -sS -o /dev/null -w "%{redirect_url}" --max-time 10 https://fleetwatch.ohmaseclaro.com/ || echo "")
+          echo "GET https://fleetwatch.ohmaseclaro.com/ → Location: $REDIRECT"
+          case "$REDIRECT" in
+            https://fleetwatch.ohmaseclaro.dev/*) echo "✓ canonical redirect ok" ;;
+            *) echo "::warning::expected redirect to fleetwatch.ohmaseclaro.dev, got '$REDIRECT'" ;;
+          esac
