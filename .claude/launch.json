@@ -6,6 +6,12 @@
       "runtimeExecutable": "node",
       "runtimeArgs": ["dist/server/index.js", "--quiet", "--port", "7890", "--no-ngrok", "--no-cursor"],
       "port": 7890
+    },
+    {
+      "name": "web-dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev:web"],
+      "port": 5173
     }
   ]
 }
