@@ -1,6 +1,6 @@
 {
   "name": "@ohmaseclaro/fleetwatch",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "type": "module",
   "description": "Watch every Claude Code, Cowork, and Cursor session from your phone — multi-provider agent observability with live updates over LAN or ngrok.",
   "keywords": [
