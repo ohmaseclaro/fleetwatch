@@ -1,4 +1,4 @@
-import { promises as fs } from "node:fs";
+import { promises as fs, watch as fsWatch, FSWatcher as NativeFSWatcher } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import chokidar, { FSWatcher } from "chokidar";
@@ -103,6 +103,13 @@ interface FileEntry {
   state: TailState | null;
   pending: boolean;
   queued: boolean;
+  /**
+   * Per-file native watcher. Uses node's `fs.watch` (kqueue/inotify) directly
+   * on each session file, which is more reliable than chokidar's directory-
+   * level fsevents on macOS for detecting appends to deep files. Null when
+   * the watcher is closed or hasn't been attached yet.
+   */
+  fileWatcher: NativeFSWatcher | null;
 }
 
 export interface WatcherOptions extends BaseProviderOptions {
@@ -278,18 +285,18 @@ export class Watcher extends BaseProvider {
     // 1s tick for status recompute (handles idle / awaiting-user transitions)
     setInterval(() => this.registry.recomputeAll(), 1000).unref();
 
-    // 2s tick: poll tracked files. chokidar / fsevents on macOS sometimes
-    // misses appends on deep directory trees or when editors write via atomic
-    // rename. This is a cheap safety net — just an `fs.stat` per file and a
-    // size/inode comparison. Catches missed change events without re-reading
-    // any data unless something actually changed.
-    this.pollTimer = setInterval(() => this.reconcileTrackedFiles(), 2000);
+    // 15s tick: low-frequency safety net. Primary change-detection is the
+    // per-file fs.watch attached in onFileChange — this poll only runs to
+    // (a) re-attach watchers that died from file rotation, and (b) catch
+    // anything both chokidar and fs.watch somehow missed. Cheap: one stat
+    // per tracked file, no extra reads unless something actually changed.
+    this.pollTimer = setInterval(() => this.reconcileTrackedFiles(), 15_000);
     this.pollTimer.unref?.();
 
-    // 10s tick: scan watched directories for NEW *.jsonl files chokidar's
-    // `add` event might have missed. Less frequent because directory walks
-    // are heavier than per-file stats.
-    this.rescanTimer = setInterval(() => this.rescanWatchedDirs(), 10_000);
+    // 30s tick: scan watched directories for NEW *.jsonl files chokidar's
+    // `add` event might have missed. Even lower frequency because directory
+    // walks are heavier than per-file stats.
+    this.rescanTimer = setInterval(() => this.rescanWatchedDirs(), 30_000);
     this.rescanTimer.unref?.();
 
     // If we found absolutely nothing, surface that clearly to the operator.
@@ -301,21 +308,28 @@ export class Watcher extends BaseProvider {
   protected async onStop(): Promise<void> {
     if (this.pollTimer) { clearInterval(this.pollTimer); this.pollTimer = null; }
     if (this.rescanTimer) { clearInterval(this.rescanTimer); this.rescanTimer = null; }
+    // Close per-file native watchers
+    for (const entry of this.files.values()) this.detachFileWatcher(entry);
     await this.projectWatcher?.close();
     await this.coworkWatcher?.close();
     await this.historyWatcher?.close();
   }
 
   /**
-   * Stat every tracked file and re-read any whose on-disk size or inode has
-   * drifted past our cached TailState. Catches `change` events chokidar misses
-   * (macOS fsevents on deep directories, atomic-rename writes, etc.).
+   * Safety-net reconciliation. For every tracked file:
+   *   1. Re-attach a per-file fs.watch if it died (rotation, fs glitch).
+   *   2. Stat the file and re-read if size/inode has drifted past our
+   *      cached TailState (catches anything chokidar AND fs.watch missed).
+   * Runs every 15s — most cycles do nothing because fs.watch already fired.
    */
   private async reconcileTrackedFiles(): Promise<void> {
     if (this.files.size === 0) return;
     // Snapshot entries up front because onFileChange may mutate this.files.
     const entries = Array.from(this.files.values());
     for (const entry of entries) {
+      // Re-attach watcher if it died.
+      if (!entry.fileWatcher) this.ensureFileWatcher(entry);
+
       if (entry.pending || entry.queued) continue;
       if (!entry.state) continue; // not yet initially-consumed; chokidar add will handle it
       let st: import("node:fs").Stats | null = null;
@@ -462,9 +476,15 @@ export class Watcher extends BaseProvider {
         state: null,
         pending: false,
         queued: false,
+        fileWatcher: null,
       };
       this.files.set(filePath, entry);
     }
+
+    // Attach a per-file native watcher if we don't have one yet. This is the
+    // primary mechanism for detecting appends — much more reliable than
+    // chokidar's directory-level events on macOS deep trees.
+    this.ensureFileWatcher(entry);
 
     if (entry.pending) {
       entry.queued = true;
@@ -587,8 +607,53 @@ export class Watcher extends BaseProvider {
   private onFileRemoved(filePath: string): void {
     const entry = this.files.get(filePath);
     if (!entry) return;
+    this.detachFileWatcher(entry);
     this.files.delete(filePath);
     this.registry.remove(entry.sessionId);
+  }
+
+  /**
+   * Open a native fs.watch on this file if we don't have one yet. Idempotent.
+   * On macOS this uses kqueue under the hood, which detects appends more
+   * reliably than fsevents (which chokidar uses). We listen for both
+   * 'change' (content modified) and 'rename' (file moved/replaced); rename
+   * usually means the file was rotated, in which case we let the periodic
+   * reconcile re-establish the watcher against the new inode.
+   */
+  private ensureFileWatcher(entry: FileEntry): void {
+    if (entry.fileWatcher) return;
+    let watcher: NativeFSWatcher;
+    try {
+      // persistent:false so a stale watcher can't keep the event loop alive
+      // independently of the main HTTP server.
+      watcher = fsWatch(entry.filePath, { persistent: false });
+    } catch (err) {
+      // fs.watch can fail on some filesystems (network mounts, etc.) — the
+      // polling reconcile loop is our fallback.
+      this.log(`[fs.watch] failed to attach ${entry.filePath}: ${(err as Error).message}`);
+      return;
+    }
+    watcher.on("change", () => {
+      this.onFileChange(entry.filePath, entry.source, "fs-watch").catch((err) => {
+        this.log(`[fs.watch change] ${entry.filePath}: ${(err as Error).message}`);
+      });
+    });
+    watcher.on("error", () => {
+      // Watcher died (file rotated, fs glitch, etc.) — drop it and let
+      // reconcileTrackedFiles re-attach on the next tick if the file still exists.
+      try { watcher.close(); } catch {}
+      if (entry.fileWatcher === watcher) entry.fileWatcher = null;
+    });
+    watcher.on("close", () => {
+      if (entry.fileWatcher === watcher) entry.fileWatcher = null;
+    });
+    entry.fileWatcher = watcher;
+  }
+
+  private detachFileWatcher(entry: FileEntry): void {
+    if (!entry.fileWatcher) return;
+    try { entry.fileWatcher.close(); } catch {}
+    entry.fileWatcher = null;
   }
 
   private projectInfoForFile(filePath: string, source: "claude-code" | "cowork"): { projectPath: string; projectLabel: string } {
