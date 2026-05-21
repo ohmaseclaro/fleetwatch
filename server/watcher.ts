@@ -320,20 +320,22 @@ export class Watcher extends BaseProvider {
   }
 
   /**
-   * Safety-net reconciliation. For every tracked file:
-   *   1. Re-attach a per-file fs.watch if it died (rotation, fs glitch).
-   *   2. Stat the file and re-read if size/inode has drifted past our
-   *      cached TailState (catches anything chokidar AND fs.watch missed).
-   * Runs every 15s — most cycles do nothing because fs.watch already fired.
+   * Safety-net reconciliation. Stats every tracked file and re-reads any
+   * whose on-disk size or inode has drifted past our cached TailState.
+   * Catches anything chokidar AND fs.watch missed. When drift is detected,
+   * onFileChange (with reason="poll") will also (re-)attach a per-file
+   * fs.watch so subsequent appends are event-driven.
+   *
+   * Runs every 15s — most cycles do nothing because fs.watch fires sooner.
+   * We deliberately do NOT eagerly re-attach dead watchers here; without
+   * recent activity there's nothing to detect, and attaching a watcher to
+   * every tracked file would re-introduce the bulk-attach problem.
    */
   private async reconcileTrackedFiles(): Promise<void> {
     if (this.files.size === 0) return;
     // Snapshot entries up front because onFileChange may mutate this.files.
     const entries = Array.from(this.files.values());
     for (const entry of entries) {
-      // Re-attach watcher if it died.
-      if (!entry.fileWatcher) this.ensureFileWatcher(entry);
-
       if (entry.pending || entry.queued) continue;
       if (!entry.state) continue; // not yet initially-consumed; chokidar add will handle it
       let st: import("node:fs").Stats | null = null;
@@ -349,6 +351,7 @@ export class Watcher extends BaseProvider {
       const shrank = st.size < entry.state.offset;
       if (rotated || grew || shrank) {
         // Reuse the normal change pipeline so dedupe / queueing still apply.
+        // onFileChange("poll") also attaches the per-file fs.watch.
         this.onFileChange(entry.filePath, entry.source, "poll").catch((err) => {
           this.log(`[watcher poll] ${entry.filePath}: ${(err as Error).message}`);
         });
@@ -485,10 +488,16 @@ export class Watcher extends BaseProvider {
       this.files.set(filePath, entry);
     }
 
-    // Attach a per-file native watcher if we don't have one yet. This is the
-    // primary mechanism for detecting appends — much more reliable than
-    // chokidar's directory-level events on macOS deep trees.
-    this.ensureFileWatcher(entry);
+    // Attach a per-file native watcher LAZILY. During the initial scan we
+    // skip it: opening one fs.watch per session at startup means hundreds of
+    // kqueue/inotify entries and (on macOS) can trigger Full Disk Access
+    // prompts for files under ~/Library/Application Support. Old sessions
+    // never change again anyway. Once a real change event arrives (from
+    // chokidar, our 15s poll, or directory rescan), we attach the per-file
+    // watcher so future appends are detected event-driven.
+    if (reason !== "initial") {
+      this.ensureFileWatcher(entry);
+    }
 
     if (entry.pending) {
       entry.queued = true;
