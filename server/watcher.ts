@@ -23,38 +23,42 @@ export const HISTORY_FILE = path.join(HOME, ".claude", "history.jsonl");
 /**
  * Quick-and-cheap predicate: does a JSONL file look like a Claude-family
  * session log (Claude Code OR Cowork — they share the format but differ in
- * casing)? Reads at most the first KB and checks for shape markers:
+ * casing)? Reads at most the first 4 KB and checks for known shape markers
+ * across the first few lines.
  *
- *   - `type: user/assistant/...` (always present)
- *   - `message: {...}` (the canonical event envelope) OR any of the
- *     known id fields (camelCase from Claude Code, snake_case from Cowork)
+ * Why scan multiple lines: Claude Code occasionally writes meta lines as the
+ * first record (e.g. `{"type":"queue-operation",...}` or `{"type":"summary"}`)
+ * before any user/assistant event. Requiring the FIRST line to be a "real"
+ * event causes false negatives → discovery falls back to walking $HOME →
+ * minutes-long startup hang. Instead we accept the file as a Claude JSONL
+ * if ANY of the first few lines carries a recognizable Claude id field
+ * (sessionId/parentUuid/etc.) — those identifiers don't appear in random
+ * JSONL files.
  *
  * False negatives (we don't recognize a real Claude file) are rare; false
- * positives are unlikely because random JSONL files don't carry the exact
- * type values we look for.
+ * positives are unlikely because random JSONL files don't carry these exact
+ * id field names.
  */
 async function looksLikeClaudeJsonl(file: string): Promise<boolean> {
   let fh: import("node:fs/promises").FileHandle | null = null;
   try {
     fh = await fs.open(file, "r");
-    const buf = Buffer.alloc(1024);
-    await fh.read(buf, 0, buf.length, 0);
-    const text = buf.toString("utf8");
-    const firstLine = text.split(/\r?\n/, 1)[0] ?? "";
+    const buf = Buffer.alloc(4096);
+    const { bytesRead } = await fh.read(buf, 0, buf.length, 0);
+    const text = buf.subarray(0, bytesRead).toString("utf8");
+    // First non-empty line must at least be an object (not a CSV or plain text).
+    const firstLine = text.split(/\r?\n/).find((l) => l.length > 0) ?? "";
     if (!firstLine.startsWith("{")) return false;
-    const hasKnownType = /"type"\s*:\s*"(user|assistant|summary|tool_use|tool_result)"/.test(firstLine);
-    if (!hasKnownType) return false;
-    // Accept any of the id-shape fields we've seen across Claude Code,
-    // Cowork, and skill subagent variants.
-    const hasIdMarker =
-      /"message"\s*:/.test(firstLine) ||
-      /"parentUuid"/.test(firstLine) ||
-      /"promptId"/.test(firstLine) ||
-      /"sessionId"/.test(firstLine) ||
-      /"session_id"/.test(firstLine) ||
-      /"parent_uuid"/.test(firstLine) ||
-      /"parent_tool_use_id"/.test(firstLine);
-    return hasIdMarker;
+    // Any Claude id field appearing anywhere in the first few KB is a
+    // strong-enough signal. These names are specific to Claude/Cowork.
+    return (
+      /"sessionId"\s*:/.test(text) ||
+      /"session_id"\s*:/.test(text) ||
+      /"parentUuid"\s*:/.test(text) ||
+      /"parent_uuid"\s*:/.test(text) ||
+      /"parent_tool_use_id"\s*:/.test(text) ||
+      /"promptId"\s*:/.test(text)
+    );
   } catch {
     return false;
   } finally {

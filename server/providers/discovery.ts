@@ -134,9 +134,17 @@ export async function discover(
 
   const maxDepth = spec.searchMaxDepth ?? 6;
   const matches: string[] = [];
+  // Hard cap: stop walking once we've checked SEARCH_BUDGET directories. On a
+  // typical macOS HOME tree at depth 6 a full walk can take 30s+ and freeze
+  // startup. We'd rather give up and let the user set the env var than hang.
+  const budget = { remaining: 5000 };
   for (const root of spec.searchRoots) {
     if (!existsSync(root)) continue;
-    await scan(root, spec.searchName, maxDepth, 0, matches);
+    await scan(root, spec.searchName, maxDepth, 0, matches, budget);
+    if (budget.remaining <= 0) {
+      log(`discovery: search of ${spec.label} hit budget (5000 dirs) — giving up`);
+      break;
+    }
   }
   if (matches.length === 0) {
     log(`discovery: search found no ${spec.label} candidates`);
@@ -164,6 +172,8 @@ export async function discover(
 /**
  * Bounded recursive directory walk. Pushes matching paths into `out`.
  * Skips IGNORE_DIRS and hidden directories below the first level.
+ * `budget` is a shared counter — decremented per readdir to enforce a global
+ * cap across all search roots so we never freeze startup on a huge tree.
  */
 async function scan(
   dir: string,
@@ -171,8 +181,11 @@ async function scan(
   maxDepth: number,
   depth: number,
   out: string[],
+  budget: { remaining: number },
 ): Promise<void> {
   if (depth > maxDepth) return;
+  if (budget.remaining <= 0) return;
+  budget.remaining--;
   let entries: { name: string; isDirectory(): boolean; isFile(): boolean; isSymbolicLink(): boolean }[];
   try {
     entries = (await fs.readdir(dir, { withFileTypes: true })) as any;
@@ -180,6 +193,7 @@ async function scan(
     return;
   }
   for (const entry of entries) {
+    if (budget.remaining <= 0) return;
     if (IGNORE_DIRS.has(entry.name)) continue;
     // Don't chase symlinks — they can create cycles or escape the search root.
     if (entry.isSymbolicLink && entry.isSymbolicLink()) continue;
@@ -192,7 +206,7 @@ async function scan(
       typeof name === "string" ? entry.name === name : name.test(entry.name);
     if (isMatch) out.push(full);
     if (entry.isDirectory()) {
-      await scan(full, name, maxDepth, depth + 1, out);
+      await scan(full, name, maxDepth, depth + 1, out, budget);
     }
   }
 }
